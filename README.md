@@ -67,3 +67,36 @@
 ## License
 
 MIT
+
+---
+
+# SOCKS5 代理一键脚本 (sk5.sh)
+
+支持 Alpine / Debian / Ubuntu，自动识别原生 IPv4 / 纯 IPv6 / WARP，安装时交互输入端口、用户名、密码。
+
+## 一行安装
+
+    sh <(curl -fsSL https://cdn.jsdelivr.net/gh/xxbb678/hy2-oneclick@main/sk5.sh)
+
+## 使用
+
+    # 安装（交互输入参数）
+    sh sk5.sh
+
+    # 卸载
+    sh sk5.sh uninstall
+
+    # 非交互（环境变量）
+    SK5_PORT=1080 SK5_USER=user SK5_PASS='pass' sh sk5.sh
+
+## 参数说明
+
+- **端口**：1-65535，直接回车默认 21461
+- **用户名**：字母数字 `_ . @ -`，回车默认 admin
+- **密码**：回车自动生成 16 位随机密码
+
+## 系统行为
+
+- Debian/Ubuntu 优先用 dante-server，源中无 dante 时自动回退 microsocks
+- Alpine 使用 dante-server（sockd）
+- 纯 IPv6 环境下同时政策→IPv6 与 →IPv4 规则，避免 IPv4 目标不可达
