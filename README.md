@@ -4,13 +4,13 @@
 
 ## 一行安装
 
-    bash <(curl -fsSL https://cdn.jsdelivr.net/gh/xxbb678/hy2-oneclick@latest/hy2.sh)
+    bash <(curl -fsSL https://raw.githubusercontent.com/xxbb678/hy2-oneclick/main/hy2.sh)
 
-> 注意：不要用 `@main` 地址，jsDelivr 对它的缓存会滞留旧版本。用 `@latest` 或固定 commit 版本号。
+> 使用 GitHub raw 直链，实时取最新版本。jsDelivr 等 CDN 有缓存，可能拉到旧脚本，不推荐。
 
 或下载后执行：
 
-    curl -fsSL https://cdn.jsdelivr.net/gh/xxbb678/hy2-oneclick@latest/hy2.sh -o hy2.sh
+    curl -fsSL https://raw.githubusercontent.com/xxbb678/hy2-oneclick/main/hy2.sh -o hy2.sh
     chmod +x hy2.sh && ./hy2.sh
 
 ## 功能
