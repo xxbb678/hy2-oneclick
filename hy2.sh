@@ -47,29 +47,79 @@ gen_uuid() {
 # 返回：模式|IP地址|WARP网卡|出口网卡
 EXCLUDE_RE='^(lo|docker.*|br-.*|veth.*|virbr.*|tun.*|tap.*|tailscale.*|podman.*|cni.*|flannel.*|cali.*|kube.*|wgcf.*|warp.*|WARP.*)$'
 
+# 判断是否为私有 / 不可路由地址
+_is_private() {
+    case "$1" in
+        10.*|192.168.*|127.*|169.254.*|0.*) return 0 ;;
+        172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
+        fd*|fc*|fe80*|::1) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# 通过外部 API 获取真实公网出口 IP（NAT/内网环境必备）
+# $1: 4 或 6，指定优先协议
+fetch_public_ip() {
+    local fam="${1:-4}" ip="" u
+    if [ "$fam" = "6" ]; then
+        for u in https://api64.ipify.org https://ifconfig.me/ip https://ip.sb; do
+            ip=$(curl -s6 --max-time 6 "$u" 2>/dev/null | tr -d '[:space:]')
+            case "$ip" in *:*) printf '%s' "$ip"; return 0 ;; esac
+        done
+    else
+        for u in https://api.ipify.org https://ifconfig.me/ip https://ipinfo.io/ip https://ip.sb; do
+            ip=$(curl -s4 --max-time 6 "$u" 2>/dev/null | tr -d '[:space:]')
+            case "$ip" in
+                ""|*:*) ;;
+                [0-9]*.[0-9]*) printf '%s' "$ip"; return 0 ;;
+            esac
+        done
+    fi
+    return 1
+}
+
 detect_net() {
-    local warp_if="" dev addr v6
+    local warp_if="" dev addr v6 pub
     for c in WARP warp wgcf wg0 warp0; do
         if ip link show "$c" >/dev/null 2>&1; then warp_if="$c"; break; fi
     done
 
+    # 优先原生公网 IPv4；若为内网地址则探测真实公网出口（NAT）
     for dev in $(ip -4 -o addr show scope global 2>/dev/null | awk '{print $2}'); do
         echo "$dev" | grep -qE "$EXCLUDE_RE" && continue
         [ -n "$warp_if" ] && [ "$dev" = "$warp_if" ] && continue
         addr=$(ip -4 -o addr show dev "$dev" scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
-        [ -n "$addr" ] && { echo "IPv4|$addr|$warp_if|$dev"; return; }
+        [ -z "$addr" ] && continue
+        if _is_private "$addr"; then
+            pub=$(fetch_public_ip 4)
+            if [ -n "$pub" ]; then echo "NAT|$pub|$warp_if|$dev"; return; fi
+            continue
+        fi
+        echo "IPv4|$addr|$warp_if|$dev"; return
     done
 
+    # 原生公网 IPv6；内网（ULA 等）同样探测公网出口
     for dev in $(ip -6 -o addr show scope global 2>/dev/null | awk '{print $2}'); do
         echo "$dev" | grep -qE "$EXCLUDE_RE" && continue
         [ -n "$warp_if" ] && [ "$dev" = "$warp_if" ] && continue
         v6=$(ip -6 -o addr show dev "$dev" scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -vE '^2606:4700|^fe80' | head -1)
-        [ -n "$v6" ] && { echo "IPv6|$v6|$warp_if|$dev"; return; }
+        [ -z "$v6" ] && continue
+        if _is_private "$v6"; then
+            pub=$(fetch_public_ip 6)
+            if [ -n "$pub" ]; then echo "NAT6|$pub|$warp_if|$dev"; return; fi
+            continue
+        fi
+        echo "IPv6|$v6|$warp_if|$dev"; return
     done
+
+    # 都没命中：直接向外部查公网出口
+    pub=$(fetch_public_ip 4)
+    if [ -n "$pub" ]; then echo "NAT|$pub|$warp_if|"; return; fi
+    pub=$(fetch_public_ip 6)
+    if [ -n "$pub" ]; then echo "NAT6|$pub|$warp_if|"; return; fi
 
     echo "unknown||$warp_if|"
 }
-
 # ---------------- pinSHA256 处理 ----------------
 # 校验并规范化：合法为 64 位 base64 或 64 位十六进制（冒号格式自动转换），否则返回空
 normalize_pinsha() {
@@ -137,7 +187,7 @@ show_info() {
     IFACE=$(echo "$NETLINE" | cut -d'|' -f4)
 
     if [ -z "$PUB_IP" ]; then
-        PUB_IP=$(curl -s4 --connect-timeout 5 ip.sb 2>/dev/null || curl -s6 --connect-timeout 5 ip.sb 2>/dev/null || echo "")
+        PUB_IP=$(fetch_public_ip 4) || PUB_IP=$(fetch_public_ip 6) || PUB_IP=""
     fi
 
     LINK_HOST="$PUB_IP"
@@ -331,7 +381,9 @@ EOF
     PUB_IP=$(echo "$NETLINE" | cut -d'|' -f2)
     WARP_IF=$(echo "$NETLINE" | cut -d'|' -f3)
     IFACE=$(echo "$NETLINE" | cut -d'|' -f4)
-    [ -z "$PUB_IP" ] && PUB_IP=$(curl -s4 --connect-timeout 5 ip.sb 2>/dev/null || curl -s6 --connect-timeout 5 ip.sb 2>/dev/null || echo "")
+    if [ -z "$PUB_IP" ]; then
+        PUB_IP=$(fetch_public_ip 4) || PUB_IP=$(fetch_public_ip 6) || PUB_IP=""
+    fi
     case "$PUB_IP" in *:*) LINK_HOST="[$PUB_IP]" ;; *) LINK_HOST="$PUB_IP" ;; esac
 
     LISTEN_ST="未检测到"
