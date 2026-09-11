@@ -4,13 +4,13 @@
 
 ## 一行安装
 
-    bash <(curl -fsSL https://raw.githubusercontent.com/USERNAME/REPO/main/hy2.sh)
+    bash <(curl -fsSL https://raw.githubusercontent.com/xxbb678/hy2-oneclick/main/hy2.sh)
 
-把 USERNAME/REPO 换成实际仓库地址。
+把 xxbb678/hy2-oneclick 换成实际仓库地址。
 
 或下载后执行：
 
-    curl -fsSL https://raw.githubusercontent.com/USERNAME/REPO/main/hy2.sh -o hy2.sh
+    curl -fsSL https://raw.githubusercontent.com/xxbb678/hy2-oneclick/main/hy2.sh -o hy2.sh
     chmod +x hy2.sh && ./hy2.sh
 
 ## 功能
