@@ -316,6 +316,14 @@ install_hy2() {
 
     UUID=$(gen_uuid)
 
+    # NAT 环境提醒：本机无法感知宿主机端口映射，建议手动指定已映射的 UDP 端口
+    _NETPRE=$(detect_net | cut -d'|' -f1)
+    case "$_NETPRE" in
+        NAT|NAT6)
+            echo -e "${YELLOW}⚠ 检测到 NAT 内网环境：请手动输入服务商已映射的 UDP 端口（回车随机可能不通）${NC}"
+            ;;
+    esac
+
     echo -ne "${YELLOW}请输入监听端口 (UDP，回车自动选可用端口): ${NC}"
     read -r _IN_PORT
     if [ -n "$_IN_PORT" ]; then
@@ -482,6 +490,31 @@ uninstall_hy2() {
     echo -e "${GREEN}✅ 卸载成功${NC}"
 }
 
+# 端口健康检查：起临时 UDP 回显，提示从外部验证
+check_port_reachability() {
+    if [ ! -f "$CONF" ]; then
+        echo -e "${RED}❌ 请先安装 Hysteria2${NC}"; return
+    fi
+    local p linkip
+    p=$($YQ_BIN '.listen' "$CONF" | sed 's/.*://')
+    linkip=$(detect_net | cut -d'|' -f2)
+    echo ""
+    echo -e "${GREEN}========== 端口可达性检查 ==========${NC}"
+    echo -e "当前端口: ${YELLOW}$p (UDP)${NC}"
+    echo -e "节点地址: ${YELLOW}$linkip${NC}"
+    echo ""
+    echo -e "${YELLOW}请在另一台机器（有公网出口）上执行以下命令验证：${NC}"
+    echo -e "  ${CYAN}nc -u -z -v $linkip $p${NC}"
+    echo -e "  ${CYAN}# 或用 hysteria 客户端导入链接直接测试${NC}"
+    echo ""
+    local st="未检测到"
+    if ss -uln 2>/dev/null | grep -q ":$p"; then st="本机监听正常"; fi
+    echo -e "本机监听: ${YELLOW}$st${NC}"
+    echo -e ""
+    echo -e "${YELLOW}提示：UDP 无连接，nc -u -z 返回 open 不代表真可达。最准确的方法是用 hysteria 客户端实际连一次。${NC}"
+    echo -e "${GREEN}========================================${NC}"
+}
+
 # 主菜单
 while true; do
     if [ "$OS" = "alpine" ]; then
@@ -509,9 +542,10 @@ while true; do
     echo -e " ${CYAN}[3]${NC} 更改监听端口"
     echo -e " ${CYAN}[4]${NC} 重启服务"
     echo -e " ${CYAN}[5]${NC} 卸载 Hysteria2"
+    echo -e " ${CYAN}[6]${NC} 端口可达性检查"
     echo -e " ${CYAN}[0]${NC} 退出脚本"
     echo -e "${GREEN}===============================================${NC}"
-    echo -ne "请输入数字选择 [0-5]: "
+    echo -ne "请输入数字选择 [0-6]: "
     read choice
 
     case $choice in
@@ -520,6 +554,7 @@ while true; do
         3) change_port ;;
         4) restart_service && echo -e "${GREEN}服务已重启${NC}" ;;
         5) uninstall_hy2 ;;
+        6) check_port_reachability ;;
         0) exit 0 ;;
         *) echo -e "${RED}无效输入，请重新选择${NC}"; sleep 1 ;;
     esac
