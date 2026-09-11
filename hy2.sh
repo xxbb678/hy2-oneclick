@@ -207,7 +207,7 @@ show_info() {
     fi
 
     PORT=$($YQ_BIN '.listen' "$CONF" | sed 's/://g')
-    UUID=$($YQ_BIN '.auth.userpass | keys | .[0]' "$CONF")
+    UUID=$($YQ_BIN '.auth.password' "$CONF" 2>/dev/null)
     if [ -z "$UUID" ] || [ "$UUID" = "null" ]; then
         UUID=$(cat "$UUID_FILE" 2>/dev/null)
     fi
@@ -387,9 +387,8 @@ tls:
   alpn:
     - h3
 auth:
-  type: userpass
-  userpass:
-    $UUID: $UUID
+  type: password
+  password: $UUID
 masquerade:
   type: proxy
   proxy:
