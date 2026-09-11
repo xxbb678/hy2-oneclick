@@ -78,6 +78,53 @@ fetch_public_ip() {
     return 1
 }
 
+# 查 IP 的国家代码（2 位，失败返回 XX）
+lookup_cc() {
+    local ip="${1:-}" cc="" r wrap u
+    [ -z "$ip" ] && { printf 'XX'; return; }
+    wrap="$ip"; case "$ip" in *:*) wrap="[$ip]" ;; esac
+
+    # 1) api.country.is — 返回{"ip":...,"country":"JP"}
+    for u in "https://api.country.is/${wrap}" "https://api.country.is/${ip}"; do
+        r=$(curl -s4 --max-time 6 "$u" 2>/dev/null || curl -s6 --max-time 6 "$u" 2>/dev/null)
+        [ -z "$r" ] && continue
+        cc=$(printf '%s' "$r" | sed -n 's/.*"country"[[:space:]]*:[[:space:]]*"\([A-Za-z]\{2\}\)".*/\1/p' | head -1)
+        if printf '%s' "$cc" | grep -qE '^[A-Za-z]{2}$'; then
+            printf '%s' "$(printf '%s' "$cc" | tr 'a-z' 'A-Z')"; return
+        fi
+    done
+
+    # 2) ipinfo.io/<ip>/country — 纯文本返回 JP
+    for u in "https://ipinfo.io/${wrap}/country" "https://ipinfo.io/${ip}/country"; do
+        r=$(curl -s4 --max-time 6 "$u" 2>/dev/null || curl -s6 --max-time 6 "$u" 2>/dev/null)
+        cc=$(printf '%s' "$r" | tr -d '[:space:]')
+        if printf '%s' "$cc" | grep -qE '^[A-Za-z]{2}$'; then
+            printf '%s' "$(printf '%s' "$cc" | tr 'a-z' 'A-Z')"; return
+        fi
+    done
+
+    # 3) ip-api.com — 纯文本返回 JP
+    cc=$(curl -s4 --max-time 6 "http://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null || curl -s6 --max-time 6 "http://ip-api.com/line/${ip}?fields=countryCode" 2>/dev/null)
+    cc=$(printf '%s' "$cc" | tr -d '[:space:]')
+    if printf '%s' "$cc" | grep -qE '^[A-Za-z]{2}$'; then
+        printf '%s' "$(printf '%s' "$cc" | tr 'a-z' 'A-Z')"; return
+    fi
+
+    printf 'XX'
+}
+
+# 国家代码 -> emoji 国旗 + 代码（无 python3 则只返回代码）
+cc_flag() {
+    local cc="${1:-}"
+    case "$cc" in ''|XX) printf 'XX'; return ;; esac
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import sys
+c=sys.argv[1].upper()
+print("".join(chr(0x1F1E6+ord(x)-65) for x in c)+" "+c) if len(c)==2 and c.isalpha() else print(c)' "$cc" 2>/dev/null && return
+    fi
+    printf '%s' "$cc"
+}
+
 detect_net() {
     local warp_if="" dev addr v6 pub
     for c in WARP warp wgcf wg0 warp0; do
@@ -245,7 +292,9 @@ show_info() {
 
     if [ -n "$PUB_IP" ]; then
         echo -e "\n${GREEN}📎 节点链接:${NC}"
-        echo -e "${YELLOW}hy2://$UUID@$LINK_HOST:$PORT?sni=$SERVER_NAME&alpn=h3&insecure=1&pinSHA256=$PINSHA256#${TAG}_${NET_MODE}${NC}"
+        _CC=$(lookup_cc "$PUB_IP")
+        _FLAG=$(cc_flag "$_CC")
+        echo -e "${YELLOW}hy2://$UUID@$LINK_HOST:$PORT?sni=$SERVER_NAME&alpn=h3&insecure=1&pinSHA256=$PINSHA256#${_FLAG}_${NET_MODE}_${TAG}${NC}"
         case "$NET_MODE" in
             NAT|NAT6)
                 echo -e "${YELLOW}⚠ 当前为 NAT 环境，链接使用公网出口 IP。若连不上，请确认服务商已将该 UDP 端口映射到本机${NC}"
@@ -467,7 +516,9 @@ EOF
     echo -e "SNI:      $SERVER_NAME"
     echo -e ""
     echo -e "${GREEN}📎 节点链接:${NC}"
-    echo -e "${YELLOW}hy2://$UUID@$LINK_HOST:$PORT?sni=$SERVER_NAME&alpn=h3&insecure=1&pinSHA256=$PINSHA256#${TAG}_${NET_MODE}${NC}"
+    _CC=$(lookup_cc "$PUB_IP")
+    _FLAG=$(cc_flag "$_CC")
+    echo -e "${YELLOW}hy2://$UUID@$LINK_HOST:$PORT?sni=$SERVER_NAME&alpn=h3&insecure=1&pinSHA256=$PINSHA256#${_FLAG}_${NET_MODE}_${TAG}${NC}"
     echo -e "${GREEN}========================================${NC}"
 }
 
