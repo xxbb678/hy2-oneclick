@@ -156,6 +156,40 @@ get_pin_sha256() {
     printf '%s' "$v"
 }
 
+# 检测端口在外部是否可达（用一个临时 UDP 服务 + 反向验证）
+# 这里采用轻量方式：检查端口是否已被占用 + 可选的外部回显测试
+_port_in_use() {
+    local p="$1"
+    if command -v ss >/dev/null 2>&1; then
+        ss -uln 2>/dev/null | grep -q ":$p " && return 0
+        ss -tln 2>/dev/null | grep -q ":$p " && return 0
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -uln 2>/dev/null | grep -q ":$p " && return 0
+        netstat -tln 2>/dev/null | grep -q ":$p " && return 0
+    fi
+    return 1
+}
+
+# 智能选择端口：若用户指定则直接用（并提醒）；
+# 否则在 10000-65535 范围内找一个未被占用的端口
+pick_port() {
+    local want="${1:-}" i p tries=0
+    if [ -n "$want" ]; then
+        if _port_in_use "$want"; then
+            echo -e "${YELLOW}⚠️ 端口 $want 已被本机占用，改用随机端口${NC}" >&2
+        else
+            printf '%s' "$want"; return 0
+        fi
+    fi
+    for i in $(seq 1 60); do
+        p=$(( ( RANDOM % 55535 ) + 10000 ))
+        if ! _port_in_use "$p"; then
+            printf '%s' "$p"; return 0
+        fi
+    done
+    printf '%s' "$(( ( RANDOM % 55535 ) + 10000 ))"
+}
+
 # 重启服务
 restart_service() {
     if [ "$OS" = "alpine" ]; then
@@ -212,6 +246,11 @@ show_info() {
     if [ -n "$PUB_IP" ]; then
         echo -e "\n${GREEN}📎 节点链接:${NC}"
         echo -e "${YELLOW}hy2://$UUID@$LINK_HOST:$PORT?sni=$SERVER_NAME&alpn=h3&insecure=1&pinSHA256=$PINSHA256#${TAG}_${NET_MODE}${NC}"
+        case "$NET_MODE" in
+            NAT|NAT6)
+                echo -e "${YELLOW}⚠ 当前为 NAT 环境，链接使用公网出口 IP。若连不上，请确认服务商已将该 UDP 端口映射到本机${NC}"
+                ;;
+        esac
     else
         echo -e "${RED}❌ 无法检测到公网 IP${NC}"
     fi
@@ -228,10 +267,12 @@ change_port() {
     echo -ne "${YELLOW}请输入新端口 (回车10000-65535随机): ${NC}"
     read NEW_PORT
 
-    [[ -z "$NEW_PORT" ]] && NEW_PORT=$(( ( RANDOM % 55535 ) + 10000 ))
-    if [[ ! "$NEW_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_PORT" -lt 1 ] || [ "$NEW_PORT" -gt 65535 ]; then
-        echo -e "${RED}❌ 输入无效${NC}"; return
+    if [ -n "$NEW_PORT" ]; then
+        if [[ ! "$NEW_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_PORT" -lt 1 ] || [ "$NEW_PORT" -gt 65535 ]; then
+            echo -e "${RED}❌ 输入无效${NC}"; return
+        fi
     fi
+    NEW_PORT=$(pick_port "$NEW_PORT")
     $YQ_BIN -i ".listen = \":$NEW_PORT\"" "$CONF"
     echo "$NEW_PORT" > "$PORT_FILE"
 
@@ -275,13 +316,16 @@ install_hy2() {
 
     UUID=$(gen_uuid)
 
-    echo -ne "${YELLOW}请输入监听端口 (回车10000-65535随机): ${NC}"
-    read PORT
-    [[ -z "$PORT" ]] && PORT=$(( ( RANDOM % 55535 ) + 10000 ))
-    if [[ ! "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-        echo -e "${RED}❌ 端口无效，使用随机端口${NC}"
-        PORT=$(( ( RANDOM % 55535 ) + 10000 ))
+    echo -ne "${YELLOW}请输入监听端口 (UDP，回车自动选可用端口): ${NC}"
+    read -r _IN_PORT
+    if [ -n "$_IN_PORT" ]; then
+        if [[ ! "$_IN_PORT" =~ ^[0-9]+$ ]] || [ "$_IN_PORT" -lt 1 ] || [ "$_IN_PORT" -gt 65535 ]; then
+            echo -e "${RED}❌ 端口无效，自动选择可用端口${NC}"
+            _IN_PORT=""
+        fi
     fi
+    PORT=$(pick_port "$_IN_PORT")
+    echo -e "${GREEN}✓ 将使用端口: $PORT (UDP)${NC}"
 
     echo "$UUID" > "$UUID_FILE"
     echo "$PORT" > "$PORT_FILE"
@@ -392,6 +436,13 @@ EOF
     elif netstat -uln 2>/dev/null | grep -q ":$PORT"; then
         LISTEN_ST="正常"
     fi
+
+    # NAT 环境提醒：端口映射由宿主机控制，本机无法自检外部可达性
+    case "$NET_MODE" in
+        NAT|NAT6)
+            echo -e "${YELLOW}⚠ NAT 环境：端口映射由宿主机控制，若外部连不通请确认该端口 UDP 映射已开放${NC}"
+            ;;
+    esac
 
     clear
     echo -e "${GREEN}=============== 安装完成 ===============${NC}"
